@@ -7,7 +7,7 @@ router = APIRouter(prefix="/api/v1")
 
 @router.get("/health", tags=["system"])
 async def health() -> dict[str, str]:
-    return {"status": "ok"}
+    return {"status": "ok", "service": "stylist-orders"}
 
 
 @router.get("/auth/me", tags=["auth"])

@@ -32,6 +32,8 @@ class ShipmentStatus(str, enum.Enum):
 
 class Customer(UUIDMixin, TimestampMixin, Base):
     __tablename__ = "customers"
+    stylist_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), ForeignKey('app_users.id'), index=True)
+    telegram_username: Mapped[str | None] = mapped_column(String(64))
     app_user_id: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True), ForeignKey("app_users.id", ondelete="SET NULL"), unique=True
     )

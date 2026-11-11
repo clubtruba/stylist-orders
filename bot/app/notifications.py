@@ -25,6 +25,8 @@ STATUS_LABELS = {
 
 
 def notification_text(event: NotificationOutbox) -> str:
+    if event.event_type == 'ORDER_MESSAGE':
+        return str(event.payload.get('text', ''))
     if event.event_type == "SHIPMENT_TRACKING_UPDATED":
         return (
             f"Для заказа {event.payload.get('item_id', '')} добавлен трек-номер.\n"
@@ -33,7 +35,8 @@ def notification_text(event: NotificationOutbox) -> str:
         )
     target = str(event.payload.get("to", ""))
     item_id = str(event.payload.get("item_id", ""))
-    text = f"Статус заказа {item_id} изменён: {STATUS_LABELS.get(target, target)}."
+    order = event.payload.get('order_number', item_id)
+    text = f"Заказ {order}, позиция {item_id[:8]}: {STATUS_LABELS.get(target, target)}."
     tracking_number = event.payload.get("tracking_number")
     if tracking_number:
         text += f"\nТрек-номер отправления: {tracking_number}."

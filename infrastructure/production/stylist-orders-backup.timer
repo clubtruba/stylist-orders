@@ -1,0 +1,7 @@
+[Unit]
+Description=Daily Stylist Orders backup
+[Timer]
+OnCalendar=*-*-* 03:45:00 Europe/Moscow
+Persistent=true
+[Install]
+WantedBy=timers.target

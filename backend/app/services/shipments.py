@@ -71,6 +71,15 @@ class ShipmentService:
         if any(item.status not in eligible for item in items):
             raise ShipmentValidationError("only warehouse items can be assigned")
 
+        from app.models import StylistOrder
+        saved_addresses = []
+        for item in items:
+            if item.order_id:
+                order = await self.session.get(StylistOrder, item.order_id)
+                saved_addresses.append(order.address_snapshot)
+        if saved_addresses and any(value != saved_addresses[0] for value in saved_addresses):
+            raise ShipmentValidationError('Заказы с разными адресами нужно отправлять отдельными посылками')
+
         shipment = CustomerShipment(
             customer_id=command.customer_id,
             status=ShipmentStatus.PREPARING,
@@ -90,6 +99,9 @@ class ShipmentService:
             address_line2=address.address_line2,
         )
         self.session.add(shipment)
+        if saved_addresses:
+            for field in ('recipient_name','phone','country_code','postal_code','region','city','address_line1','address_line2'):
+                setattr(shipment, 'address_'+field, saved_addresses[0].get(field))
         await self.session.flush()
 
         for item in items:
@@ -157,6 +169,9 @@ class ShipmentService:
         for item in items:
             previous = item.status
             item.status = ItemStatus.SHIPPED
+            from app.services.order_notifications import notify_stylist_item
+            await notify_stylist_item(self.session, item, {'item_id':str(item.id), 'from':previous.value,
+                'to':ItemStatus.SHIPPED.value, 'tracking_number':shipment.tracking_number})
             self.session.add(ItemStatusHistory(
                 item_id=item.id,
                 from_status=previous,
@@ -244,6 +259,9 @@ class ShipmentService:
             self.session.add(ShipmentItem(shipment_id=shipment.id, item_id=item.id))
         shipment.carrier = carrier
         shipment.tracking_number = tracking_number
+        from app.services.order_notifications import notify_stylist_item
+        await notify_stylist_item(self.session, item, {'item_id':str(item.id), 'to':ItemStatus.SHIPPED.value,
+                                                       'tracking_number':tracking_number})
         recipient_user_id = await self.session.scalar(
             select(Customer.app_user_id).where(Customer.id == item.customer_id)
         )

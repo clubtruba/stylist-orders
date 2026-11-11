@@ -327,6 +327,9 @@ async def update_item_status(
             status_code=status.HTTP_409_CONFLICT,
             detail="Create a customer shipment to assign or ship items",
         )
+    item = await session.get(Item, item_id)
+    if item and item.order_id and command.status in {ItemStatus.CANCELLED, ItemStatus.RETURN_IN_PROGRESS, ItemStatus.RETURNED}:
+        raise HTTPException(409, 'Используйте отмену или возврат в карточке заказа, чтобы сохранить сумму возврата')
     try:
         item = await ItemService(session).transition(
             item_id, command.status, actor.app_user_id, command.reason
@@ -349,6 +352,9 @@ async def correct_item_status(
     session: AsyncSession = Depends(get_session),
 ):
     actor.require_admin()
+    item = await session.get(Item, item_id)
+    if item and item.order_id:
+        raise HTTPException(409, 'Коррекция статуса для новых заказов недоступна; используйте действия в карточке заказа')
     try:
         item = await ItemService(session).correct_status(
             item_id, command.status, actor.app_user_id, command.reason.strip()

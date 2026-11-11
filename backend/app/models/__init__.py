@@ -31,8 +31,11 @@ from app.models.operations import (
     OutboxStatus,
 )
 from app.models.user import AppUser, UserRole
+from app.models.orders import (StylistOrder, OrderQuote, QuoteLine, OrderPayment, OrderRefund,
+                               ExchangeRate, BotConversation, RecipientInvite)
 
 __all__ = [
+    'StylistOrder', 'OrderQuote', 'QuoteLine', 'OrderPayment', 'OrderRefund', 'ExchangeRate', 'BotConversation', 'RecipientInvite',
     "AppUser",
     "AllocationMethod",
     "AuditLog",
