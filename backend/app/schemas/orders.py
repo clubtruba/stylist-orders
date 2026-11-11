@@ -16,12 +16,30 @@ class RecipientInput(BaseModel):
     address_line1: str = Field(min_length=5, max_length=300)
     address_line2: str = Field(default="", max_length=300)
 
-    @field_validator("recipient_name")
+    @field_validator("recipient_name", mode="before")
     @classmethod
     def passport_name(cls, value):
+        if not isinstance(value, str):
+            raise ValueError("Укажите имя и фамилию английскими буквами")
         value = value.strip()
         if not re.fullmatch(r"[A-Za-z][A-Za-z '\-]+", value):
-            raise ValueError("Имя получателя укажите латиницей как в паспорте")
+            raise ValueError("Имя и фамилию укажите только английскими буквами A–Z, как в паспорте")
+        return value
+
+    @field_validator("region", "city", "address_line1", "address_line2", mode="before")
+    @classmethod
+    def english_address(cls, value):
+        if not isinstance(value, str):
+            raise ValueError("Укажите адрес английскими буквами")
+        value = value.strip()
+        if value and (
+            not re.fullmatch(r"[A-Za-z0-9 .,/'#()\-]+", value) or not re.search(r"[A-Za-z]", value)
+        ):
+            raise ValueError(
+                "Адрес укажите только английскими буквами A–Z. "
+                "Допускаются цифры, пробелы и знаки . , / ' # ( ) -; "
+                "например: Moscow, Tverskaya St., 10, Apt. 5"
+            )
         return value
 
     @field_validator("telegram_username", mode="before")
@@ -39,7 +57,7 @@ class RecipientInput(BaseModel):
     @field_validator("postal_code")
     @classmethod
     def postcode(cls, value):
-        if not re.fullmatch(r"\d{6}", value.strip()):
+        if not re.fullmatch(r"[0-9]{6}", value.strip()):
             raise ValueError("Индекс России должен содержать 6 цифр")
         return value.strip()
 
@@ -60,6 +78,10 @@ def validate_recipient_step(field: str, value: str | None):
         "phone": RecipientInput.contact_phone,
         "telegram_username": RecipientInput.username,
         "postal_code": RecipientInput.postcode,
+        **{
+            key: RecipientInput.english_address
+            for key in ("region", "city", "address_line1", "address_line2")
+        },
     }
     if isinstance(value, str):
         value = value.strip()

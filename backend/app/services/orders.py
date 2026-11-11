@@ -2,6 +2,7 @@ from datetime import datetime
 from decimal import Decimal
 from uuid import UUID, uuid4
 
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -20,6 +21,7 @@ from app.models import (
     StylistOrder,
 )
 from app.pricing import calculate_quote
+from app.schemas.orders import RecipientInput
 from app.services.rates import moscow_today
 
 
@@ -73,6 +75,20 @@ class OrderService:
             )
         }
         snapshot["telegram_username"] = customer.telegram_username
+        try:
+            RecipientInput(
+                **{
+                    key: value
+                    for key, value in snapshot.items()
+                    if key != "country_code"
+                    and not (value is None and key in {"region", "address_line2"})
+                }
+            )
+        except ValidationError as exc:
+            raise OrderError(
+                "Проверьте сохраненного получателя: имя, регион, город и адрес должны "
+                "быть английскими буквами. Добавьте получателя с исправленными данными."
+            ) from exc
         order = StylistOrder(
             number="SO-" + uuid4().hex[:12].upper(),
             stylist_id=actor,

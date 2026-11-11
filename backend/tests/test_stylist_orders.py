@@ -156,3 +156,14 @@ def test_cbr_weekend_effective_date_and_nominal():
     assert effective.day == 7 and rate == D("95.0125")
     with pytest.raises(ValueError):
         parse_cbr(b'<ValCurs Date="12.11.2026"/>', moscow_today().replace(day=8))
+
+
+@pytest.mark.asyncio
+async def test_saved_non_english_address_cannot_create_new_order():
+    async with SessionFactory() as session:
+        service, stylist, _, order, _, customer, address = await setup_order(session)
+        address.city = "Москва"
+        with pytest.raises(OrderError, match="английскими"):
+            await service.create(customer.id, address.id, stylist.id)
+        assert order.address_snapshot["city"] == "Moscow"
+        await session.rollback()
