@@ -30,8 +30,8 @@ jobs:
           from urllib.parse import urlsplit
           url = os.environ['API_URL'].rstrip('/')
           parts = urlsplit(url)
-          if parts.scheme != 'https' or parts.hostname != 'alex-server.tail684c35.ts.net' or parts.port != 8443 or parts.path != '/api/v1':
-              raise SystemExit('Configure VITE_API_BASE_URL for the separate stylist API on HTTPS port 8443')
+          if parts.scheme != 'https' or parts.hostname != 'alex-server.tail684c35.ts.net' or parts.port != 10000 or parts.path != '/api/v1':
+              raise SystemExit('Configure VITE_API_BASE_URL for the separate stylist API on HTTPS port 10000')
           with urllib.request.urlopen(url + '/health', timeout=20) as response:
               data = json.load(response)
           if data.get('status') != 'ok' or data.get('service') != 'stylist-orders':
