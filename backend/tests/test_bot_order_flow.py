@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
+from uuid import uuid4
 
 import pytest
 from bot.app import main as bot
@@ -96,8 +97,17 @@ async def test_recipient_wizard_skip_validation_back_and_persistence():
         message.text = "123"
         await bot.receive_text(message, session, stylist, conversation)
         assert conversation.data["recipient_step"] == 3
-        for answer in ("101000", "Московская область", "Москва", "Тестовая улица, дом 1"):
-            message.text = answer
+        for invalid, valid in (
+            ("123", "101000"),
+            ("Московская область", "Moscow Oblast"),
+            ("Москва", "Moscow"),
+            ("Тестовая улица 1", "Test street 1"),
+        ):
+            step = conversation.data["recipient_step"]
+            message.text = invalid
+            await bot.receive_text(message, session, stylist, conversation)
+            assert conversation.data["recipient_step"] == step
+            message.text = valid
             await bot.receive_text(message, session, stylist, conversation)
         assert conversation.state == "IDLE"
         assert conversation.active_order_id != old_order.id
@@ -131,3 +141,72 @@ async def test_recipient_wizard_cancel_keeps_existing_orders():
         assert conversation.state == "IDLE" and conversation.data == {}
         assert (await service.get(order.id, stylist.id)).id == order.id
         await session.rollback()
+
+
+@pytest.mark.asyncio
+async def test_admin_sees_and_opens_stylist_orders_without_editing_intake():
+    from app.services.orders import OrderError
+
+    async with SessionFactory() as session:
+        _, stylist, admin, order, _, _, _ = await setup_order(session)
+        other = SimpleNamespace(id=uuid4(), role=stylist.role)
+        message = SimpleNamespace(answer=AsyncMock())
+        await bot.list_orders(message, session, admin)
+        buttons = message.answer.call_args.kwargs["reply_markup"].inline_keyboard
+        assert any(button.callback_data == f"order:{order.id}" for row in buttons for button in row)
+        conversation = SimpleNamespace(active_order_id=None, state="IDLE", data={})
+        callback = SimpleNamespace(data=f"order:{order.id}", message=message, answer=AsyncMock())
+        await bot.select_order(callback, session, admin, conversation)
+        assert order.number in message.answer.call_args.args[0]
+        assert conversation.active_order_id is None
+        await bot.list_orders(message, session, other)
+        assert message.answer.call_args.args[0] == "Сохраненных заказов пока нет."
+        with pytest.raises(OrderError):
+            await bot.select_order(callback, session, other, conversation)
+        await session.rollback()
+
+
+@pytest.mark.asyncio
+async def test_application_uses_authenticated_inline_launch_and_repairs_chat_menu(monkeypatch):
+    monkeypatch.setattr(
+        bot, "get_settings", lambda: SimpleNamespace(telegram_webapp_url="https://example.test")
+    )
+    reply_buttons = [button for row in bot.keyboard().keyboard for button in row]
+    opener = next(button for button in reply_buttons if button.text == "Открыть приложение")
+    assert opener.web_app is None  # Reply-keyboard web apps receive no signed initData.
+    message = SimpleNamespace(
+        answer=AsyncMock(),
+        bot=SimpleNamespace(set_chat_menu_button=AsyncMock()),
+        chat=SimpleNamespace(id=252246696),
+    )
+    await bot.start(message, SimpleNamespace(state="IDLE"))
+    menu = message.bot.set_chat_menu_button.call_args.kwargs
+    assert (
+        menu["chat_id"] == 252246696 and menu["menu_button"].web_app.url == "https://example.test"
+    )
+    launch = message.answer.call_args.kwargs["reply_markup"].inline_keyboard[0][0]
+    assert launch.web_app.url == "https://example.test"
+
+
+@pytest.mark.asyncio
+async def test_recipient_form_started_before_update_requests_invalid_field_again():
+    from bot.app.recipient_form import accept_recipient_value
+
+    conversation = SimpleNamespace(
+        state="RECIPIENT",
+        data={
+            "recipient_step": 6,
+            "recipient_values": dict(
+                recipient_name="TEST RECIPIENT",
+                phone="+79990000000",
+                telegram_username=None,
+                postal_code="101000",
+                region="Московская область",
+                city="Moscow",
+            ),
+        },
+    )
+    message = SimpleNamespace(answer=AsyncMock())
+    assert await accept_recipient_value(message, None, None, conversation, "Test Street 1") is None
+    assert conversation.data["recipient_step"] == 4
+    assert conversation.data["recipient_values"]["address_line1"] == "Test Street 1"

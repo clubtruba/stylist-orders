@@ -16,6 +16,7 @@ from aiogram.types import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     KeyboardButton,
+    MenuButtonWebApp,
     Message,
     ReplyKeyboardMarkup,
     WebAppInfo,
@@ -32,6 +33,7 @@ from app.models import (
     IdempotencyKey,
     OrderQuote,
     StylistOrder,
+    UserRole,
 )
 from app.schemas.orders import ItemInput
 from app.services.operators import operator_role, register_operator
@@ -58,15 +60,28 @@ def keyboard():
         [KeyboardButton(text="Завершить заказ")],
     ]
     if get_settings().telegram_webapp_url:
-        rows.append(
-            [
-                KeyboardButton(
-                    text="Открыть приложение",
-                    web_app=WebAppInfo(url=get_settings().telegram_webapp_url),
-                )
-            ]
-        )
+        rows.append([KeyboardButton(text="Открыть приложение")])
     return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True, is_persistent=True)
+
+
+def application_button():
+    url = get_settings().telegram_webapp_url
+    if not url:
+        return None
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Открыть заказы", web_app=WebAppInfo(url=url))]
+        ]
+    )
+
+
+@router.message(F.text == "Открыть приложение")
+@router.message(Command("app"))
+async def open_application(message: Message, **kwargs):
+    await message.answer(
+        "Откройте приложение кнопкой ниже — Telegram передаст данные вашего аккаунта для входа.",
+        reply_markup=application_button(),
+    )
 
 
 def buttons(values):
@@ -205,6 +220,14 @@ router.callback_query.outer_middleware(OperatorMiddleware())
 
 @router.message(CommandStart())
 async def start(message: Message, conversation, **kwargs):
+    if get_settings().telegram_webapp_url:
+        await message.bot.set_chat_menu_button(
+            chat_id=message.chat.id,
+            menu_button=MenuButtonWebApp(
+                text="Заказы",
+                web_app=WebAppInfo(url=get_settings().telegram_webapp_url),
+            ),
+        )
     if conversation.state == "RECIPIENT":
         await show_recipient_step(message, conversation)
         return
@@ -212,6 +235,7 @@ async def start(message: Message, conversation, **kwargs):
         "Заказы из Испании. Создайте заказ или выберите сохраненный в разделе «Мои заказы».",
         reply_markup=keyboard(),
     )
+    await open_application(message)
 
 
 @router.message(F.text == "Новый заказ")
@@ -285,14 +309,10 @@ async def choose_recipient(callback: CallbackQuery, session, actor, conversation
 @router.message(F.text == "Мои заказы")
 @router.message(Command("orders"))
 async def list_orders(message: Message, session, actor, **kwargs):
-    orders = (
-        await session.scalars(
-            select(StylistOrder)
-            .where(StylistOrder.stylist_id == actor.id)
-            .order_by(StylistOrder.created_at.desc())
-            .limit(80)
-        )
-    ).all()
+    query = select(StylistOrder).order_by(StylistOrder.created_at.desc()).limit(80)
+    if actor.role != UserRole.ADMIN:
+        query = query.where(StylistOrder.stylist_id == actor.id)
+    orders = (await session.scalars(query)).all()
     if not orders:
         await message.answer("Сохраненных заказов пока нет.", reply_markup=keyboard())
         return
@@ -312,7 +332,18 @@ async def list_orders(message: Message, session, actor, **kwargs):
 
 @router.callback_query(F.data.startswith("order:"))
 async def select_order(callback: CallbackQuery, session, actor, conversation):
-    order = await OrderService(session).get(UUID(callback.data.split(":")[1]), actor.id)
+    order = await OrderService(session).get(
+        UUID(callback.data.split(":")[1]), actor.id, actor.role == UserRole.ADMIN
+    )
+    if order.stylist_id != actor.id:
+        await callback.message.answer(
+            f"Заказ {order.number}. Получатель: {order.address_snapshot['recipient_name']}.\n"
+            f"Состояние: {order.state}.\n"
+            "Все товары, расчеты и управление заказом доступны в приложении.",
+            reply_markup=application_button(),
+        )
+        await callback.answer()
+        return
     conversation.active_order_id = order.id
     conversation.state, conversation.data = "IDLE", {}
     await callback.message.answer(

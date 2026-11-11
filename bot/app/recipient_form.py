@@ -8,16 +8,22 @@ from app.schemas.orders import RecipientInput, validate_recipient_step
 from app.services.orders import OrderService
 
 STEPS = (
-    ("recipient_name", "Укажите имя и фамилию получателя латиницей, как в паспорте."),
+    (
+        "recipient_name",
+        "Укажите имя и фамилию получателя только английскими буквами A–Z, как в паспорте.",
+    ),
     ("phone", "Укажите контактный телефон получателя с кодом страны."),
     (
         "telegram_username",
         "Укажите Telegram username получателя или нажмите «Пропустить». Это поле необязательное.",
     ),
     ("postal_code", "Укажите индекс в России — 6 цифр."),
-    ("region", "Укажите регион: область, край или республику."),
-    ("city", "Укажите город получателя."),
-    ("address_line1", "Укажите улицу, дом и квартиру получателя."),
+    ("region", "Укажите регион английскими буквами: например, Moscow Oblast."),
+    ("city", "Укажите город английскими буквами: например, Moscow."),
+    (
+        "address_line1",
+        "Укажите улицу, дом и квартиру английскими буквами: например, Tverskaya St., 10, Apt. 5.",
+    ),
 )
 
 
@@ -84,7 +90,17 @@ async def accept_recipient_value(message, session, actor, conversation, raw):
         conversation.data = {"recipient_step": step + 1, "recipient_values": values}
         await show_recipient_step(message, conversation)
         return None
-    command = RecipientInput(**values)
+    try:
+        command = RecipientInput(**values)
+    except ValidationError as exc:
+        # A form started before a validation update may contain an old address.
+        invalid = exc.errors()[0]
+        field = invalid["loc"][0]
+        step = next(i for i, (name, _) in enumerate(STEPS) if name == field)
+        conversation.data = {"recipient_step": step, "recipient_values": values}
+        await message.answer(str(invalid["msg"]).removeprefix("Value error, "))
+        await show_recipient_step(message, conversation)
+        return None
     customer = Customer(
         stylist_id=actor.id,
         display_name=command.recipient_name,

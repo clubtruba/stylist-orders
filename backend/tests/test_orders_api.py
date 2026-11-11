@@ -146,3 +146,57 @@ async def test_invalid_nonempty_username_is_rejected(client):
         },
     )
     assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("recipient_name", "IVAN Иванов"),
+        ("region", "Московская область"),
+        ("city", "Москва"),
+        ("address_line1", "Test улица 1"),
+        ("address_line2", "Квартира 5"),
+        ("city", "Málаga"),
+        ("address_line1", "Street ١"),
+    ],
+)
+async def test_recipient_rejects_non_english_shipping_fields(client, field, value):
+    http, _ = client
+    payload = dict(
+        recipient_name="IVAN IVANOV",
+        phone="+79990000000",
+        postal_code="101000",
+        city="Moscow",
+        address_line1="Tverskaya St., 10/2, Apt. 5",
+        region="Moscow Oblast",
+        address_line2="Building (B), #5",
+    )
+    payload[field] = value
+    response = await http.post("/api/v1/recipients", json=payload)
+    assert response.status_code == 422
+    assert response.json()["detail"][0]["loc"][-1] == field
+
+
+@pytest.mark.asyncio
+async def test_admin_can_read_orders_from_another_operator(client):
+    http, actor = client
+    recipient = await http.post(
+        "/api/v1/recipients",
+        json=dict(
+            recipient_name="IVAN IVANOV",
+            phone="+79990000000",
+            postal_code="101000",
+            city="Moscow",
+            address_line1="Tverskaya St., 10/2, Apt. 5",
+            region="Moscow Oblast",
+            address_line2="Building (B), #5",
+        ),
+    )
+    assert recipient.status_code == 200
+    order = (await http.post("/api/v1/orders", json=recipient.json())).json()
+    app.dependency_overrides[get_request_actor] = lambda: RequestActor(
+        uuid4(), 252246696, UserRole.ADMIN, None
+    )
+    assert order["id"] in [value["id"] for value in (await http.get("/api/v1/orders")).json()]
+    assert (await http.get(f"/api/v1/orders/{order['id']}")).status_code == 200
