@@ -1,0 +1,6 @@
+[Unit]
+Description=Stylist Orders backup
+RequiresMountsFor=/mnt/ai /mnt/archive_hdd_serv
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /mnt/ai/repos/stylist-orders/infrastructure/production/backup.sh

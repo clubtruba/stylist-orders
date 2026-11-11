@@ -27,6 +27,12 @@ class ItemStatus(str, enum.Enum):
 class Item(UUIDMixin, TimestampMixin, Base):
     __tablename__ = "items"
 
+    order_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey('stylist_orders.id'), index=True
+    )
+    product_name: Mapped[str | None] = mapped_column(String(500))
+    price_source: Mapped[str | None] = mapped_column(String(32))
+
     customer_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True), ForeignKey("customers.id", ondelete="RESTRICT"), index=True
     )

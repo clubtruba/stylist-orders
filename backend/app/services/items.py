@@ -49,6 +49,8 @@ class ItemService:
         ensure_item_transition(item.status, target)
         previous = item.status
         item.status = target
+        from app.services.order_notifications import notify_stylist_item
+        await notify_stylist_item(self.session, item, {'item_id':str(item.id), 'from':previous.value, 'to':target.value})
         self.session.add(
             ItemStatusHistory(
                 item_id=item.id,
@@ -106,6 +108,8 @@ class ItemService:
     async def _queue_status_notification(
         self, item: Item, previous: ItemStatus, target: ItemStatus
     ) -> None:
+        from app.services.order_notifications import notify_stylist_item
+        await notify_stylist_item(self.session, item, {'item_id':str(item.id), 'from':previous.value, 'to':target.value})
         recipient_user_id = await self.session.scalar(
             select(Customer.app_user_id).where(Customer.id == item.customer_id)
         )

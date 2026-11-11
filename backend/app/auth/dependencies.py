@@ -48,11 +48,18 @@ async def get_request_actor(
         )
     except TelegramAuthError as exc:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
+    from app.services.operators import operator_role
+    try:
+        expected_role = operator_role(identity.telegram_user_id)
+    except PermissionError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
     user = await session.scalar(
         select(AppUser).where(AppUser.telegram_user_id == identity.telegram_user_id)
     )
     if user is None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User is not registered")
+    if user.role != expected_role:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='Роль изменилась. Откройте /start в боте')
     customer_id = await session.scalar(
         select(Customer.id).where(Customer.app_user_id == user.id)
     )

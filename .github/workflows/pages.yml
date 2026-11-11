@@ -1,0 +1,51 @@
+name: Deploy Stylist Mini App
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: stylist-pages
+  cancel-in-progress: false
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: mini-app/package-lock.json
+      - name: Check API before publishing
+        env:
+          API_URL: ${{ vars.VITE_API_BASE_URL }}
+        run: |
+          python3 - <<'PY'
+          import json, os, urllib.request
+          from urllib.parse import urlsplit
+          url = os.environ['API_URL'].rstrip('/')
+          parts = urlsplit(url)
+          if parts.scheme != 'https' or parts.hostname != 'alex-server.tail684c35.ts.net' or parts.port != 8443 or parts.path != '/api/v1':
+              raise SystemExit('Configure VITE_API_BASE_URL for the separate stylist API on HTTPS port 8443')
+          with urllib.request.urlopen(url + '/health', timeout=20) as response:
+              data = json.load(response)
+          if data.get('status') != 'ok' or data.get('service') != 'stylist-orders':
+              raise SystemExit('The new stylist API is not ready')
+          PY
+      - run: npm ci
+        working-directory: mini-app
+      - run: npm run build
+        working-directory: mini-app
+        env:
+          VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL }}
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: mini-app/dist
+      - uses: actions/deploy-pages@v4
+        id: deployment

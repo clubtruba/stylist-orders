@@ -1,0 +1,56 @@
+name: stylist-orders
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: stylist_orders
+      POSTGRES_USER: stylist_orders
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?required}
+    volumes:
+      - /mnt/ai/data/stylist-orders/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U stylist_orders -d stylist_orders']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    mem_limit: 512m
+    cpus: 1
+  migrate:
+    build:
+      context: ../../backend
+    env_file: /mnt/ai/compose/stylist-orders/.env
+    command: ['alembic', 'upgrade', 'head']
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: 'no'
+  api:
+    build:
+      context: ../../backend
+    restart: unless-stopped
+    env_file: /mnt/ai/compose/stylist-orders/.env
+    ports: ['127.0.0.1:8011:8000']
+    volumes:
+      - /mnt/ai/data/stylist-orders/payment-proofs:/app/payment-proofs
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    mem_limit: 384m
+    cpus: 1
+  bot:
+    build:
+      context: ../..
+      dockerfile: bot/Dockerfile
+    restart: unless-stopped
+    env_file: /mnt/ai/compose/stylist-orders/.env
+    volumes:
+      - /mnt/ai/data/stylist-orders/payment-proofs:/app/payment-proofs
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    mem_limit: 384m
+    cpus: 1
+networks:
+  default:
+    name: stylist-orders-network
