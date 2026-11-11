@@ -108,3 +108,41 @@ async def test_russian_postcode_and_passport_name_validation(client):
 async def test_unauthenticated_orders_are_rejected():
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         assert (await client.get("/api/v1/orders")).status_code == 401
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("username", ["omitted", None, "", "  "])
+async def test_recipient_without_telegram_username(client, username):
+    http, _ = client
+    payload = {
+        "recipient_name": "TEST RECIPIENT",
+        "phone": "+79990000000",
+        "postal_code": "101000",
+        "region": "Moscow",
+        "city": "Moscow",
+        "address_line1": "Test street 1",
+    }
+    if username != "omitted":
+        payload["telegram_username"] = username
+    response = await http.post("/api/v1/recipients", json=payload)
+    assert response.status_code == 200, response.text
+    created = await http.post("/api/v1/orders", json=response.json())
+    assert created.status_code == 200, created.text
+    assert created.json()["address_snapshot"]["telegram_username"] is None
+
+
+@pytest.mark.asyncio
+async def test_invalid_nonempty_username_is_rejected(client):
+    http, _ = client
+    response = await http.post(
+        "/api/v1/recipients",
+        json={
+            "recipient_name": "TEST RECIPIENT",
+            "phone": "+79990000000",
+            "telegram_username": "bad name",
+            "postal_code": "101000",
+            "city": "Moscow",
+            "address_line1": "Test street 1",
+        },
+    )
+    assert response.status_code == 422

@@ -33,13 +33,18 @@ from app.models import (
     OrderQuote,
     StylistOrder,
 )
-from app.schemas.orders import ItemInput, RecipientInput
+from app.schemas.orders import ItemInput
 from app.services.operators import operator_role, register_operator
 from app.services.orders import OrderError, OrderService
 from app.services.product_import import identify_product, import_product
 from app.services.rates import current_rate
 
 from .notifications import notification_worker
+from .recipient_form import (
+    accept_recipient_value,
+    begin_recipient_form,
+    show_recipient_step,
+)
 
 router = Router()
 dispatcher = Dispatcher()
@@ -200,6 +205,9 @@ router.callback_query.outer_middleware(OperatorMiddleware())
 
 @router.message(CommandStart())
 async def start(message: Message, conversation, **kwargs):
+    if conversation.state == "RECIPIENT":
+        await show_recipient_step(message, conversation)
+        return
     await message.answer(
         "Заказы из Испании. Создайте заказ или выберите сохраненный в разделе «Мои заказы».",
         reply_markup=keyboard(),
@@ -225,12 +233,35 @@ async def new_order(message: Message, session, actor, conversation):
 
 @router.callback_query(F.data == "new_recipient")
 async def new_recipient(callback: CallbackQuery, conversation, **kwargs):
-    conversation.state = "RECIPIENT"
-    conversation.data = {}
-    await callback.message.answer(
-        "Пришлите данные получателя одним сообщением — 7 строк:\n1. Имя и фамилия латиницей как в паспорте\n2. Телефон\n3. Telegram username\n4. Индекс (6 цифр)\n5. Регион\n6. Город\n7. Улица, дом, квартира\n\nСтрана: Россия.",
-        reply_markup=keyboard(),
-    )
+    begin_recipient_form(conversation)
+    await show_recipient_step(callback.message, conversation)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("recipient_form:"))
+async def recipient_navigation(callback: CallbackQuery, session, actor, conversation):
+    if conversation.state != "RECIPIENT":
+        await callback.answer("Эта форма уже закрыта")
+        return
+    _, action, step_text = callback.data.split(":")
+    step = conversation.data.get("recipient_step", 0)
+    if int(step_text) != step:
+        await callback.answer("Используйте кнопки текущего шага")
+        await show_recipient_step(callback.message, conversation)
+        return
+    if action == "cancel":
+        conversation.state, conversation.data = "IDLE", {}
+        await callback.message.answer(
+            "Ввод получателя отменен. Сохраненные заказы остались в «Мои заказы».",
+            reply_markup=keyboard(),
+        )
+    elif action == "back" and step:
+        conversation.data = {**conversation.data, "recipient_step": step - 1}
+        await show_recipient_step(callback.message, conversation)
+    elif action == "skip" and step == 2:
+        await accept_recipient_value(
+            callback.message, session, actor, conversation, None
+        )
     await callback.answer()
 
 
@@ -414,54 +445,12 @@ async def screenshot(message: Message, session, actor, conversation, bot: Bot):
 async def receive_text(message: Message, session, actor, conversation):
     raw = message.text.strip()
     if conversation.state == "RECIPIENT":
-        lines = [line.strip() for line in raw.splitlines() if line.strip()]
-        if len(lines) != 7:
-            raise OrderError(
-                "Нужны ровно 7 строк: имя, телефон, username, индекс, регион, город, адрес"
+        order = await accept_recipient_value(message, session, actor, conversation, raw)
+        if order:
+            await message.answer(
+                f"Получатель сохранен. Заказ {order.number} создан. Пришлите ссылку на товар.",
+                reply_markup=keyboard(),
             )
-        command = RecipientInput(
-            **dict(
-                zip(
-                    (
-                        "recipient_name",
-                        "phone",
-                        "telegram_username",
-                        "postal_code",
-                        "region",
-                        "city",
-                        "address_line1",
-                    ),
-                    lines,
-                )
-            )
-        )
-        customer = Customer(
-            stylist_id=actor.id,
-            display_name=command.recipient_name,
-            phone=command.phone,
-            telegram_username=command.telegram_username,
-        )
-        session.add(customer)
-        await session.flush()
-        address = CustomerAddress(
-            customer_id=customer.id,
-            label="Основной адрес",
-            country_code="RU",
-            is_default=True,
-            **command.model_dump(exclude={"telegram_username"}),
-        )
-        session.add(address)
-        await session.flush()
-        order = await OrderService(session).create(customer.id, address.id, actor.id)
-        conversation.active_order_id, conversation.state, conversation.data = (
-            order.id,
-            "IDLE",
-            {},
-        )
-        await message.answer(
-            f"Получатель сохранен. Заказ {order.number} создан. Пришлите ссылку на товар.",
-            reply_markup=keyboard(),
-        )
         return
     links = raw.split()
     if links and all(link.startswith("https://") for link in links):
