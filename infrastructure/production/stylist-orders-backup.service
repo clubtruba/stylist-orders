@@ -3,4 +3,6 @@ Description=Stylist Orders backup
 RequiresMountsFor=/mnt/ai /mnt/archive_hdd_serv
 [Service]
 Type=oneshot
+User=muka1532
+Group=muka1532
 ExecStart=/bin/bash /mnt/ai/repos/stylist-orders/infrastructure/production/backup.sh
