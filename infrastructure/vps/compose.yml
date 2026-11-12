@@ -1,0 +1,43 @@
+name: stylist-browser-vps
+services:
+  browser:
+    build:
+      context: .
+      dockerfile: browser/Dockerfile
+    image: stylist-browser-vps:1.0
+    restart: unless-stopped
+    init: true
+    user: pwuser
+    read_only: true
+    environment:
+      XDG_CONFIG_HOME: /tmp/chromium-config
+      XDG_CACHE_HOME: /tmp/chromium-cache
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=512m,mode=1777
+    ports: ['127.0.0.1:18080:8080']
+    cap_drop: ['ALL']
+    security_opt:
+      - no-new-privileges:true
+      - seccomp=/opt/stylist-browser/seccomp_profile.json
+    mem_limit: 1536m
+    cpus: 1
+    pids_limit: 256
+    shm_size: 256m
+    logging:
+      driver: json-file
+      options:
+        max-size: 5m
+        max-file: '2'
+    healthcheck:
+      test: ['CMD', 'python', '-c', 'import urllib.request; urllib.request.urlopen("http://127.0.0.1:8080/health", timeout=3)']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+networks:
+  default:
+    name: stylist-browser-vps
+    driver_opts:
+      com.docker.network.bridge.name: br-stylist-vps
+    ipam:
+      config:
+        - subnet: 172.30.72.0/28

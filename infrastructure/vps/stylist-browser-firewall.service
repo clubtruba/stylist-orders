@@ -1,0 +1,13 @@
+[Unit]
+Description=Network restrictions for the dedicated stylist browser container
+Requires=docker.service
+After=docker.service
+PartOf=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /opt/stylist-browser/firewall.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=docker.service
