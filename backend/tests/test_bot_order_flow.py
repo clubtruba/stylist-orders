@@ -210,3 +210,43 @@ async def test_recipient_form_started_before_update_requests_invalid_field_again
     assert await accept_recipient_value(message, None, None, conversation, "Test Street 1") is None
     assert conversation.data["recipient_step"] == 4
     assert conversation.data["recipient_values"]["address_line1"] == "Test Street 1"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "automatic,entered,source",
+    [(True, "35,95", "zara_browser"), (True, "36", "manual"), (False, "35,95", "manual")],
+)
+async def test_bot_suggested_price_and_manual_fallback_are_saved(
+    monkeypatch, automatic, entered, source
+):
+    from decimal import Decimal
+
+    from sqlalchemy import select
+
+    from app.models import Item
+
+    async with SessionFactory() as session:
+        _, stylist, _, order, _, _, _ = await setup_order(session)
+        url = "https://www.zara.com/es/en/combined-satin-trousers-p08912573.html"
+        order.intake_snapshot = {"urls": [url]}
+        conversation = SimpleNamespace(active_order_id=order.id, state="IDLE", data={})
+        result = ImportResult(
+            identify_product(url),
+            name="Trousers",
+            price_eur=Decimal("35.95") if automatic else None,
+            manual_reason=None if automatic else "browser_unavailable",
+            source="zara_browser",
+        )
+        monkeypatch.setattr(bot, "import_product", AsyncMock(return_value=result))
+        message = SimpleNamespace(text="", answer=AsyncMock())
+        await bot.prompt_pending(message, order, conversation)
+        prompt = message.answer.call_args.args[0]
+        assert ("35.95 EUR" in prompt) if automatic else ("Введите цену вручную" in prompt)
+        message.text = f"{entered}; M; Black; 1"
+        await bot.receive_text(message, session, stylist, conversation)
+        item = await session.scalar(select(Item).where(Item.order_id == order.id))
+        assert item.listed_price == Decimal(entered.replace(",", "."))
+        assert item.price_source == source
+        assert conversation.state == "IDLE" and order.intake_snapshot["urls"] == []
+        await session.rollback()

@@ -520,8 +520,16 @@ async def receive_text(message: Message, session, actor, conversation):
             quantity=fields[3],
             name=values.get("name"),
         )
+        source = (
+            values.get("price_source", "manual")
+            if values.get("suggested_price") == str(command.price)
+            else "manual"
+        )
         await OrderService(session).add_item(
-            conversation.active_order_id, actor.id, **command.model_dump()
+            conversation.active_order_id,
+            actor.id,
+            source=source,
+            **command.model_dump(),
         )
         order = await OrderService(session).get(conversation.active_order_id, actor.id)
         remaining = (order.intake_snapshot or {}).get("urls", [])[1:]
@@ -552,17 +560,32 @@ async def receive_text(message: Message, session, actor, conversation):
 
 async def prompt_pending(message, order, conversation):
     url = order.intake_snapshot["urls"][0]
+    await message.answer(
+        "Проверяю цену товара. Если магазин не ответит, можно будет ввести цену вручную."
+    )
     imported = await import_product(url)
     conversation.state = "ITEM"
-    conversation.data = {"url": url, "name": imported.name}
+    conversation.data = {
+        "url": url,
+        "name": imported.name,
+        "suggested_price": str(imported.price_eur)
+        if imported.price_eur is not None
+        else None,
+        "price_source": imported.source,
+    }
     summary = imported.name or imported.product.merchant
     price = (
         f"Найденная цена: {imported.price_eur} EUR."
         if imported.price_eur is not None
-        else "Автоматически получить цену не удалось."
+        else "Магазин не отдал однозначную цену. Введите цену вручную в евро."
+    )
+    example = (
+        str(imported.price_eur).replace(".", ",")
+        if imported.price_eur is not None
+        else "29,99"
     )
     await message.answer(
-        f"{summary}\n{url}\n{price}\nВведите или подтвердите цену, размер, цвет и количество через точку с запятой:\n29,99; M; черный; 1",
+        f"{summary}\n{url}\n{price}\nВведите или подтвердите цену, размер, цвет и количество через точку с запятой:\n{example}; M; черный; 1",
         reply_markup=keyboard(),
     )
 

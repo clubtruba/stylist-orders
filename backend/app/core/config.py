@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     business_timezone: str = "Europe/Moscow"
     telegram_webapp_url: str = ""
     telegram_init_data_max_age_seconds: int = 3600
+    product_browser_url: str = ""
     payment_proof_dir: str = "/app/payment-proofs"
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
 
