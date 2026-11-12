@@ -38,18 +38,25 @@ services:
         condition: service_completed_successfully
     mem_limit: 384m
     cpus: 1
-  product-browser:
+  browser-tunnel:
     build:
-      context: ../..
-      dockerfile: browser/Dockerfile
+      context: ../tunnel
     restart: unless-stopped
     init: true
-    mem_limit: 1536m
-    cpus: 1
-    shm_size: 256m
-    pids_limit: 256
+    user: '1000:1000'
+    read_only: true
+    volumes:
+      - /mnt/ai/compose/stylist-orders/browser-tunnel:/keys:ro
+    mem_limit: 96m
+    cpus: 0.25
+    pids_limit: 32
     cap_drop: ['ALL']
     security_opt: ['no-new-privileges:true']
+    logging:
+      driver: json-file
+      options:
+        max-size: 5m
+        max-file: '2'
     healthcheck:
       test: ['CMD', 'python', '-c', 'import urllib.request; urllib.request.urlopen("http://127.0.0.1:8080/health", timeout=3)']
       interval: 30s
@@ -62,7 +69,7 @@ services:
     restart: unless-stopped
     env_file: /mnt/ai/compose/stylist-orders/.env
     environment:
-      PRODUCT_BROWSER_URL: http://product-browser:8080
+      PRODUCT_BROWSER_URL: http://browser-tunnel:8080
     volumes:
       - /mnt/ai/data/stylist-orders/payment-proofs:/app/payment-proofs
     depends_on:

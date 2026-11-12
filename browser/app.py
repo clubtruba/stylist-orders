@@ -39,10 +39,11 @@ async def fetch_product(product):
     from playwright.async_api import async_playwright
 
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=False)
+        browser = await p.chromium.launch(headless=False, chromium_sandbox=True)
         try:
             context = await browser.new_context(
-                locale="en-GB", viewport={"width": 1280, "height": 900}
+                locale="en-GB", viewport={"width": 1280, "height": 900},
+                service_workers="block", accept_downloads=False
             )
             page = await context.new_page()
 
