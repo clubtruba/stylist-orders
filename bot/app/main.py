@@ -41,6 +41,7 @@ from app.services.orders import OrderError, OrderService
 from app.services.product_import import identify_product, import_product
 from app.services.rates import current_rate
 
+from . import item_form
 from .notifications import notification_worker
 from .recipient_form import (
     accept_recipient_value,
@@ -472,7 +473,10 @@ async def screenshot(message: Message, session, actor, conversation, bot: Bot):
     )
 
 
-async def show_item_options(message):
+async def show_item_options(message, conversation=None):
+    if conversation and conversation.data.get("item_wizard"):
+        await item_form.begin_options(message, conversation)
+        return
     await message.answer(
         "Укажите размер, цвет и количество: M; черный; 2\n"
         "Если нужна 1 штука: M; черный. Если цвет выбирать не нужно: M.\n"
@@ -494,7 +498,7 @@ async def confirm_item_price(callback, session, actor, conversation):
     await OrderService(session).get(conversation.active_order_id, actor.id)
     if action == "yes":
         conversation.data = {**values, "price_step": "options"}
-        await show_item_options(callback.message)
+        await show_item_options(callback.message, conversation)
     elif action == "edit":
         conversation.data = {**values, "price_step": "manual"}
         await callback.message.answer("Введите правильную цену в евро, например: 29,95")
@@ -502,6 +506,21 @@ async def confirm_item_price(callback, session, actor, conversation):
         await callback.answer("Неизвестное действие")
         return
     await callback.answer()
+
+
+@router.callback_query(F.data.startswith("item_option:"))
+async def choose_item_option(callback, session, actor, conversation):
+    parts = callback.data.split(":")
+    if (len(parts) != 3 or conversation.state != "ITEM"
+            or conversation.data.get("price_step") != "wizard"
+            or conversation.data.get("option_token") != parts[1]):
+        await callback.answer("Эта кнопка уже неактуальна. Используйте последнее сообщение.")
+        return
+    await OrderService(session).get(conversation.active_order_id, actor.id)
+    await callback.answer()
+    command = await item_form.accept_action(callback.message, conversation, parts[2])
+    if command:
+        await save_pending_item(callback.message, session, actor, conversation, command)
 
 
 @router.message(F.text)
@@ -540,6 +559,11 @@ async def receive_text(message: Message, session, actor, conversation):
     if conversation.state == "ITEM":
         values = conversation.data
         step = values.get("price_step")
+        if step == "wizard":
+            command = await item_form.accept_text(message, conversation, raw)
+            if command:
+                await save_pending_item(message, session, actor, conversation, command)
+            return
         if step == "confirm":
             raise OrderError("Подтвердите найденную цену кнопкой «Да» или нажмите «Изменить цену»")
         if step == "manual":
@@ -554,7 +578,7 @@ async def receive_text(message: Message, session, actor, conversation):
                 **values, "suggested_price": str(price),
                 "price_source": "manual", "price_step": "options",
             }
-            await show_item_options(message)
+            await show_item_options(message, conversation)
             return
         if step == "options":
             fields = [value.strip() for value in raw.replace(",", ";").split(";")]
@@ -579,27 +603,7 @@ async def receive_text(message: Message, session, actor, conversation):
             quantity=fields[3],
             name=values.get("name"),
         )
-        source = (
-            values.get("price_source", "manual")
-            if values.get("suggested_price") == str(command.price)
-            else "manual"
-        )
-        await OrderService(session).add_item(
-            conversation.active_order_id,
-            actor.id,
-            source=source,
-            **command.model_dump(),
-        )
-        order = await OrderService(session).get(conversation.active_order_id, actor.id)
-        remaining = (order.intake_snapshot or {}).get("urls", [])[1:]
-        order.intake_snapshot = {"urls": remaining}
-        conversation.state, conversation.data = "IDLE", {}
-        await message.answer(
-            "Товар сохранен. Пришлите следующую ссылку или выберите действие внизу.",
-            reply_markup=keyboard(),
-        )
-        if remaining:
-            await prompt_pending(message, order, conversation)
+        await save_pending_item(message, session, actor, conversation, command)
         return
     if not conversation.active_order_id:
         raise OrderError(
@@ -617,6 +621,31 @@ async def receive_text(message: Message, session, actor, conversation):
     )
 
 
+async def save_pending_item(message, session, actor, conversation, command):
+    values = conversation.data
+    source = (
+        values.get("price_source", "manual")
+        if values.get("suggested_price") == str(command.price)
+        else "manual"
+    )
+    await OrderService(session).add_item(
+        conversation.active_order_id,
+        actor.id,
+        source=source,
+        **command.model_dump(),
+    )
+    order = await OrderService(session).get(conversation.active_order_id, actor.id)
+    remaining = (order.intake_snapshot or {}).get("urls", [])[1:]
+    order.intake_snapshot = {"urls": remaining}
+    conversation.state, conversation.data = "IDLE", {}
+    await message.answer(
+        f"Товар сохранен: {command.color} · {command.size} · {command.quantity} шт. · {command.price} EUR/шт.\n"
+        "Пришлите следующую ссылку или выберите действие внизу.",
+        reply_markup=keyboard(),
+    )
+    if remaining:
+        await prompt_pending(message, order, conversation)
+
 async def prompt_pending(message, order, conversation):
     url = order.intake_snapshot["urls"][0]
     await message.answer(
@@ -631,6 +660,8 @@ async def prompt_pending(message, order, conversation):
         if imported.price_eur is not None
         else None,
         "price_source": imported.source,
+        "item_wizard": True,
+        "variants": list(imported.variants),
     }
     summary = imported.name or imported.product.merchant
     token = uuid4().hex[:12]
