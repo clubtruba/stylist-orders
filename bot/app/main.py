@@ -472,6 +472,38 @@ async def screenshot(message: Message, session, actor, conversation, bot: Bot):
     )
 
 
+async def show_item_options(message):
+    await message.answer(
+        "Укажите размер, цвет и количество: M; черный; 2\n"
+        "Если нужна 1 штука: M; черный. Если цвет выбирать не нужно: M.\n"
+        "Для нескольких штук без выбора цвета: M; -; 2."
+    )
+
+
+@router.callback_query(F.data.startswith("item_price:"))
+async def confirm_item_price(callback, session, actor, conversation):
+    _, token, action = callback.data.split(":")
+    values = conversation.data
+    if (
+        conversation.state != "ITEM"
+        or values.get("price_token") != token
+        or values.get("price_step") != "confirm"
+    ):
+        await callback.answer("Эта кнопка уже неактуальна. Используйте последнее сообщение.")
+        return
+    await OrderService(session).get(conversation.active_order_id, actor.id)
+    if action == "yes":
+        conversation.data = {**values, "price_step": "options"}
+        await show_item_options(callback.message)
+    elif action == "edit":
+        conversation.data = {**values, "price_step": "manual"}
+        await callback.message.answer("Введите правильную цену в евро, например: 29,95")
+    else:
+        await callback.answer("Неизвестное действие")
+        return
+    await callback.answer()
+
+
 @router.message(F.text)
 async def receive_text(message: Message, session, actor, conversation):
     raw = message.text.strip()
@@ -506,12 +538,39 @@ async def receive_text(message: Message, session, actor, conversation):
             await prompt_pending(message, order, conversation)
         return
     if conversation.state == "ITEM":
-        fields = [value.strip() for value in raw.split(";")]
-        if len(fields) != 4:
-            raise OrderError(
-                "Формат: цена в евро; размер; цвет; количество. Например: 29,99; M; черный; 1"
-            )
         values = conversation.data
+        step = values.get("price_step")
+        if step == "confirm":
+            raise OrderError("Подтвердите найденную цену кнопкой «Да» или нажмите «Изменить цену»")
+        if step == "manual":
+            try:
+                price = ItemInput(
+                    url=values["url"], price=raw.replace(",", "."),
+                    size="M", color="-", quantity=1,
+                ).price
+            except ValidationError:
+                raise OrderError("Введите только цену в евро, например: 29,95")
+            conversation.data = {
+                **values, "suggested_price": str(price),
+                "price_source": "manual", "price_step": "options",
+            }
+            await show_item_options(message)
+            return
+        if step == "options":
+            fields = [value.strip() for value in raw.replace(",", ";").split(";")]
+            if not 1 <= len(fields) <= 3 or not fields[0]:
+                raise OrderError("Укажите размер; цвет; количество. Например: M; черный; 2. Или только размер: M")
+            size = fields[0]
+            color = fields[1] if len(fields) > 1 and fields[1] != "-" else "-"
+            quantity = fields[2] if len(fields) > 2 else "1"
+            fields = [values["suggested_price"], size, color, quantity]
+        else:
+            # Keep pre-update in-progress entries compatible with their original prompt.
+            fields = [value.strip() for value in raw.split(";")]
+            if len(fields) != 4:
+                raise OrderError(
+                    "Формат: цена в евро; размер; цвет; количество. Например: 29,99; M; черный; 1"
+                )
         command = ItemInput(
             url=values["url"],
             price=fields[0].replace(",", "."),
@@ -574,20 +633,25 @@ async def prompt_pending(message, order, conversation):
         "price_source": imported.source,
     }
     summary = imported.name or imported.product.merchant
-    price = (
-        f"Найденная цена: {imported.price_eur} EUR."
-        if imported.price_eur is not None
-        else "Магазин не отдал однозначную цену. Введите цену вручную в евро."
-    )
-    example = (
-        str(imported.price_eur).replace(".", ",")
-        if imported.price_eur is not None
-        else "29,99"
-    )
-    await message.answer(
-        f"{summary}\n{url}\n{price}\nВведите или подтвердите цену, размер, цвет и количество через точку с запятой:\n{example}; M; черный; 1",
-        reply_markup=keyboard(),
-    )
+    token = uuid4().hex[:12]
+    if imported.price_eur is not None:
+        conversation.data = {
+            **conversation.data, "price_step": "confirm", "price_token": token,
+        }
+        await message.answer(
+            f"{summary}\n{url}\nНайденная цена: {imported.price_eur} EUR.\nЦена верна?",
+            reply_markup=buttons([
+                ("Да", f"item_price:{token}:yes"),
+                ("Изменить цену", f"item_price:{token}:edit"),
+            ]),
+        )
+    else:
+        conversation.data = {**conversation.data, "price_step": "manual"}
+        await message.answer(
+            f"{summary}\n{url}\nМагазин не отдал однозначную цену. "
+            "Введите цену вручную в евро, например: 29,95.",
+            reply_markup=keyboard(),
+        )
 
 
 async def exchange_rate_worker():

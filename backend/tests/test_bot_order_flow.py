@@ -42,11 +42,15 @@ async def test_link_queue_survives_pause_switch_and_resume(monkeypatch):
         callback = SimpleNamespace(data=f"order:{order.id}", message=message, answer=AsyncMock())
         await bot.select_order(callback, session, stylist, conversation)
         assert conversation.data["url"] == first
-        message.text = "29,99; M; черный; 2"
+        message.text = "29,99"
+        await bot.receive_text(message, session, stylist, conversation)
+        message.text = "M; черный; 2"
         await bot.receive_text(message, session, stylist, conversation)
         assert order.intake_snapshot["urls"] == [second]
         assert conversation.data["url"] == second
-        message.text = "10; L; белый; 1"
+        message.text = "10"
+        await bot.receive_text(message, session, stylist, conversation)
+        message.text = "L; белый; 1"
         await bot.receive_text(message, session, stylist, conversation)
         assert not order.intake_snapshot["urls"] and conversation.state == "IDLE"
         await session.rollback()
@@ -243,10 +247,55 @@ async def test_bot_suggested_price_and_manual_fallback_are_saved(
         await bot.prompt_pending(message, order, conversation)
         prompt = message.answer.call_args.args[0]
         assert ("35.95 EUR" in prompt) if automatic else ("Введите цену вручную" in prompt)
-        message.text = f"{entered}; M; Black; 1"
+        if automatic:
+            callback = SimpleNamespace(
+                data=f"item_price:{conversation.data['price_token']}:" + ("yes" if source != "manual" else "edit"),
+                message=message, answer=AsyncMock(),
+            )
+            await bot.confirm_item_price(callback, session, stylist, conversation)
+        if not automatic or source == "manual":
+            message.text = entered
+            await bot.receive_text(message, session, stylist, conversation)
+        message.text = "M, Black, 1"
         await bot.receive_text(message, session, stylist, conversation)
         item = await session.scalar(select(Item).where(Item.order_id == order.id))
         assert item.listed_price == Decimal(entered.replace(",", "."))
         assert item.price_source == source
         assert conversation.state == "IDLE" and order.intake_snapshot["urls"] == []
+        await session.rollback()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('options,color,quantity', [('M', '-', 1), ('M; Blue', 'Blue', 1), ('L; -; 3', '-', 3)])
+async def test_confirm_price_defaults_and_stale_buttons(monkeypatch, options, color, quantity):
+    from decimal import Decimal
+    from sqlalchemy import select
+    from app.models import Item
+    from app.services.orders import OrderError
+
+    async with SessionFactory() as session:
+        _, stylist, _, order, _, _, _ = await setup_order(session)
+        url = 'https://www.zara.com/es/en/combined-satin-trousers-p08912573.html'
+        order.intake_snapshot = {'urls': [url]}
+        conversation = SimpleNamespace(active_order_id=order.id, state='IDLE', data={})
+        monkeypatch.setattr(bot, 'import_product', AsyncMock(return_value=ImportResult(
+            identify_product(url), price_eur=Decimal('35.95'), source='zara_browser'
+        )))
+        message = SimpleNamespace(text=options, answer=AsyncMock())
+        await bot.prompt_pending(message, order, conversation)
+        with pytest.raises(OrderError, match='кнопкой'):
+            await bot.receive_text(message, session, stylist, conversation)
+        token = conversation.data['price_token']
+        callback = SimpleNamespace(data='item_price:old:yes', message=message, answer=AsyncMock())
+        await bot.confirm_item_price(callback, session, stylist, conversation)
+        assert conversation.data['price_step'] == 'confirm'
+        callback.data = f'item_price:{token}:yes'
+        await bot.confirm_item_price(callback, session, stylist, conversation)
+        await bot.receive_text(message, session, stylist, conversation)
+        item = await session.scalar(select(Item).where(Item.order_id == order.id))
+        assert (item.color, item.quantity, item.listed_price, item.price_source) == (
+            color, quantity, Decimal('35.95'), 'zara_browser'
+        )
+        await bot.confirm_item_price(callback, session, stylist, conversation)
+        assert conversation.state == 'IDLE'
         await session.rollback()
