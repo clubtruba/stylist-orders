@@ -5,7 +5,7 @@ import re
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from html.parser import HTMLParser
-from urllib.parse import urlsplit
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 
 @dataclass(frozen=True)
@@ -106,6 +106,7 @@ class ImportResult:
     price_eur: Decimal | None = None
     manual_reason: str | None = None
     source: str = "structured_data"
+    variants: tuple[dict, ...] = ()
 
 
 async def import_product(url: str) -> ImportResult:
@@ -168,6 +169,128 @@ async def import_from_browser(product: ProductLink, endpoint: str) -> ImportResu
             or price != price.quantize(Decimal(".01"))
         ):
             raise ValueError("invalid price")
-        return ImportResult(product, name=name, price_eur=price, source="zara_browser")
+        return ImportResult(
+            product, name=name, price_eur=price, source="zara_browser",
+            variants=validate_variants(data.get("variants"), product),
+        )
     except (httpx.HTTPError, TimeoutError, ValueError, KeyError, TypeError, InvalidOperation):
         return ImportResult(product, manual_reason="browser_unavailable")
+
+
+def _label(value, maximum):
+    if not isinstance(value, str):
+        return None
+    value = " ".join(value.split())
+    return value if value and len(value) <= maximum else None
+
+
+def _amount(value):
+    try:
+        price = Decimal(str(value))
+        if price.is_finite() and 0 < price <= 10_000_000 and price == price.quantize(Decimal(".01")):
+            return str(price)
+    except (InvalidOperation, ValueError, TypeError):
+        pass
+    return None
+
+
+def validate_variants(raw, product):
+    """Bound external metadata and never accept a different store or product URL."""
+    if not isinstance(raw, list) or len(raw) > 50:
+        return ()
+    result = []
+    for color in raw:
+        if not isinstance(color, dict):
+            continue
+        name = _label(color.get("name"), 128)
+        url = color.get("url")
+        try:
+            link = identify_product(url) if isinstance(url, str) and len(url) <= 3000 else None
+        except ValueError:
+            continue
+        if not name or not link or link.merchant != product.merchant or link.product_id != product.product_id:
+            continue
+        sizes = color.get("sizes")
+        if not isinstance(sizes, list) or len(sizes) > 80:
+            continue
+        clean_sizes = []
+        for size in sizes:
+            if not isinstance(size, dict):
+                continue
+            label = _label(size.get("name"), 64)
+            if label and not any(s["name"] == label for s in clean_sizes):
+                clean_sizes.append({"name": label, "price_eur": _amount(size.get("price_eur"))})
+        result.append({
+            "name": name, "url": url, "price_eur": _amount(color.get("price_eur")),
+            "sizes": clean_sizes,
+        })
+    return tuple(result)
+
+
+def zara_variants(html, product):
+    """Read the primary product's JSON payload without executing page scripts."""
+    class Scripts(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.inside = False
+            self.blocks = []
+
+        def handle_starttag(self, tag, attrs):
+            if tag == "script":
+                self.inside = True
+
+        def handle_endtag(self, tag):
+            if tag == "script":
+                self.inside = False
+
+        def handle_data(self, data):
+            if self.inside and "zara.viewPayload" in data:
+                self.blocks.append(data)
+
+    if not isinstance(html, str) or len(html) > 8_000_000:
+        return ()
+    parser = Scripts()
+    parser.feed(html)
+    for block in parser.blocks:
+        match = re.search(r"(?:window\.)?zara\.viewPayload\s*=\s*", block)
+        if not match:
+            continue
+        try:
+            payload = json.JSONDecoder().raw_decode(block[match.end():])[0]
+            item = payload["product"]
+            if str(item["seo"]["seoProductId"]) != product.product_id:
+                continue
+            colors = item["detail"]["colors"]
+            if not isinstance(colors, list) or len(colors) > 50:
+                continue
+            variants = []
+            for color in colors:
+                if not isinstance(color, dict):
+                    continue
+                variant_id = str(color.get("productId", ""))
+                if not re.fullmatch(r"[0-9]{1,20}", variant_id):
+                    continue
+                parts = urlsplit(product.url)
+                query = [(k, v) for k, v in parse_qsl(parts.query) if k != "v1"]
+                query.append(("v1", variant_id))
+                url = urlunsplit(parts._replace(query=urlencode(query)))
+
+                def euros(value):
+                    return str(Decimal(value) / 100) if type(value) is int and value > 0 else None
+
+                sizes = color.get("sizes")
+                if not isinstance(sizes, list) or len(sizes) > 80:
+                    continue
+                variants.append({
+                    "name": color.get("name"), "url": url,
+                    "price_eur": euros(color.get("price")),
+                    "sizes": [
+                        {"name": size.get("name"), "price_eur": euros(size.get("price", color.get("price")))}
+                        for size in sizes
+                        if isinstance(size, dict) and size.get("availability") == "in_stock"
+                    ],
+                })
+            return validate_variants(variants, product)
+        except (ValueError, KeyError, TypeError, InvalidOperation):
+            continue
+    return ()

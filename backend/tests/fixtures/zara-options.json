@@ -1,0 +1,92 @@
+{
+  "product": {
+    "seo": {
+      "seoProductId": "03199635"
+    },
+    "detail": {
+      "colors": [
+        {
+          "name": "Sand / Marl",
+          "productId": 594401162,
+          "price": 1995,
+          "sizes": [
+            {
+              "name": "S",
+              "price": 1995,
+              "availability": "in_stock"
+            },
+            {
+              "name": "M",
+              "price": 1995,
+              "availability": "in_stock"
+            },
+            {
+              "name": "L",
+              "price": 1995,
+              "availability": "in_stock"
+            },
+            {
+              "name": "XL",
+              "price": 1995,
+              "availability": "in_stock"
+            }
+          ]
+        },
+        {
+          "name": "Navy blue",
+          "productId": 612704447,
+          "price": 1995,
+          "sizes": [
+            {
+              "name": "S",
+              "price": 1995,
+              "availability": "in_stock"
+            },
+            {
+              "name": "M",
+              "price": 1995,
+              "availability": "in_stock"
+            },
+            {
+              "name": "L",
+              "price": 1995,
+              "availability": "in_stock"
+            },
+            {
+              "name": "XL",
+              "price": 1995,
+              "availability": "in_stock"
+            }
+          ]
+        },
+        {
+          "name": "Grey marl",
+          "productId": 612704449,
+          "price": 1995,
+          "sizes": [
+            {
+              "name": "S",
+              "price": 1995,
+              "availability": "in_stock"
+            },
+            {
+              "name": "M",
+              "price": 1995,
+              "availability": "in_stock"
+            },
+            {
+              "name": "L",
+              "price": 1995,
+              "availability": "in_stock"
+            },
+            {
+              "name": "XL",
+              "price": 1995,
+              "availability": "in_stock"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

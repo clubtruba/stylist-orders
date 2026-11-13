@@ -3,7 +3,7 @@
 import asyncio
 from decimal import Decimal, InvalidOperation
 
-from app.services.product_import import identify_product
+from app.services.product_import import identify_product, zara_variants
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
@@ -107,14 +107,20 @@ async def fetch_product(product):
             values = await page.locator(PRICE).evaluate_all(
                 '(nodes)=>nodes.map(n=>({value:n.getAttribute("value"),currency:n.getAttribute("data-currency")}))'
             )
-            return price_result(name, values)
+            result = price_result(name, values)
+            # Missing option metadata must never discard an otherwise valid price.
+            try:
+                result["variants"] = zara_variants(await page.content(), product)
+            except Exception:
+                result["variants"] = ()
+            return result
         finally:
             await browser.close()
 
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "service": "product-browser"}
+    return {"status": "ok", "service": "product-browser", "features": ["product_options"]}
 
 
 @app.post("/product")

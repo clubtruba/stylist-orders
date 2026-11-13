@@ -44,13 +44,19 @@ async def test_link_queue_survives_pause_switch_and_resume(monkeypatch):
         assert conversation.data["url"] == first
         message.text = "29,99"
         await bot.receive_text(message, session, stylist, conversation)
-        message.text = "M; черный; 2"
+        for text in ('черный', 'M'):
+            message.text = text
+            await bot.receive_text(message, session, stylist, conversation)
+        message.text = '2'
         await bot.receive_text(message, session, stylist, conversation)
         assert order.intake_snapshot["urls"] == [second]
         assert conversation.data["url"] == second
         message.text = "10"
         await bot.receive_text(message, session, stylist, conversation)
-        message.text = "L; белый; 1"
+        for text in ('белый', 'L'):
+            message.text = text
+            await bot.receive_text(message, session, stylist, conversation)
+        message.text = '1'
         await bot.receive_text(message, session, stylist, conversation)
         assert not order.intake_snapshot["urls"] and conversation.state == "IDLE"
         await session.rollback()
@@ -256,7 +262,10 @@ async def test_bot_suggested_price_and_manual_fallback_are_saved(
         if not automatic or source == "manual":
             message.text = entered
             await bot.receive_text(message, session, stylist, conversation)
-        message.text = "M, Black, 1"
+        for text in ('Black', 'M'):
+            message.text = text
+            await bot.receive_text(message, session, stylist, conversation)
+        message.text = '1'
         await bot.receive_text(message, session, stylist, conversation)
         item = await session.scalar(select(Item).where(Item.order_id == order.id))
         assert item.listed_price == Decimal(entered.replace(",", "."))
@@ -291,6 +300,10 @@ async def test_confirm_price_defaults_and_stale_buttons(monkeypatch, options, co
         assert conversation.data['price_step'] == 'confirm'
         callback.data = f'item_price:{token}:yes'
         await bot.confirm_item_price(callback, session, stylist, conversation)
+        for text in (color, options.split(';')[0].strip()):
+            message.text = text
+            await bot.receive_text(message, session, stylist, conversation)
+        message.text = str(quantity)
         await bot.receive_text(message, session, stylist, conversation)
         item = await session.scalar(select(Item).where(Item.order_id == order.id))
         assert (item.color, item.quantity, item.listed_price, item.price_source) == (
